@@ -1,18 +1,40 @@
 import { useGLTF, useAnimations } from "@react-three/drei";
-import { useEffect, useRef, Suspense } from "react";
+import { useEffect, useRef, Suspense, useState } from "react";
 import * as THREE from "three";
 import { useGame, type AnimationSet } from "./stores/useGame";
 import React from "react";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
 export function EcctrlAnimation(props: EcctrlAnimationProps) {
-  // Change the character src to yours
-  const group = useRef();
-  const { animations } = useGLTF(props.characterURL);
-  const { actions } = useAnimations(animations, group);
+  const group = useRef<THREE.Group>(null);
+  const { scene } = useGLTF(props.characterURL);
+  const [animationsAdded, setAnimationsAdded] = useState(false);
 
-  /**
-   * Character animations setup
-   */
+  useEffect(() => {
+    const loader = new GLTFLoader();
+
+    const loadModelAndAnimations = async () => {
+      try {
+        for (const animUrl of props.animationUrls) {
+          const animData = await loader.loadAsync(animUrl);
+          animData.animations.forEach((clip) => {
+            scene.animations.push(clip);
+          });
+        }
+        setAnimationsAdded(true);
+      } catch (error) {
+        console.error("Error loading animations:", error);
+      }
+    };
+
+    loadModelAndAnimations();
+  }, [scene, props.animationUrls]);
+
+  const { actions, mixer } = useAnimations(
+    animationsAdded ? scene.animations : [],
+    group
+  );
+
   const curAnimation = useGame((state) => state.curAnimation);
   const resetAnimation = useGame((state) => state.reset);
   const initializeAnimationSet = useGame(
@@ -20,53 +42,46 @@ export function EcctrlAnimation(props: EcctrlAnimationProps) {
   );
 
   useEffect(() => {
-    // Initialize animation set
     initializeAnimationSet(props.animationSet);
-  }, []);
+  }, [props.animationSet, initializeAnimationSet]);
 
   useEffect(() => {
-    // Play animation
-    const action =
-      actions[curAnimation ? curAnimation : props.animationSet.jumpIdle];
+    if (actions && animationsAdded && group.current) {
+      const action =
+        actions[curAnimation] || actions[props.animationSet.jumpIdle];
 
-    // For jump and jump land animation, only play once and clamp when finish
-    if (
-      curAnimation === props.animationSet.jump ||
-      curAnimation === props.animationSet.jumpLand ||
-      curAnimation === props.animationSet.action1 ||
-      curAnimation === props.animationSet.action2 ||
-      curAnimation === props.animationSet.action3 ||
-      curAnimation === props.animationSet.action4
-    ) {
-      action
-        .reset()
-        .fadeIn(0.2)
-        .setLoop(THREE.LoopOnce, undefined as number)
-        .play();
-      action.clampWhenFinished = true;
-    } else {
-      action.reset().fadeIn(0.2).play();
+      if (
+        curAnimation === props.animationSet.jump ||
+        curAnimation === props.animationSet.jumpLand ||
+        curAnimation === props.animationSet.action1 ||
+        curAnimation === props.animationSet.action2 ||
+        curAnimation === props.animationSet.action3 ||
+        curAnimation === props.animationSet.action4
+      ) {
+        action
+          .reset()
+          .fadeIn(0.2)
+          .setLoop(THREE.LoopOnce, undefined as number)
+          .play();
+        action.clampWhenFinished = true;
+      } else {
+        action.reset().fadeIn(0.2).play();
+      }
+
+      (action as any)._mixer.addEventListener("finished", () => resetAnimation());
+
+      return () => {
+        action.fadeOut(0.2);
+        (action as any)._mixer.removeEventListener("finished", () =>
+          resetAnimation()
+        );
+      };
     }
-
-    // When any action is clamp and finished reset animation
-    (action as any)._mixer.addEventListener("finished", () => resetAnimation());
-
-    return () => {
-      // Fade out previous action
-      action.fadeOut(0.2);
-
-      // Clean up mixer listener, and empty the _listeners array
-      (action as any)._mixer.removeEventListener("finished", () =>
-        resetAnimation()
-      );
-      (action as any)._mixer._listeners = [];
-    };
-  }, [curAnimation]);
+  }, [curAnimation, actions, animationsAdded]);
 
   return (
     <Suspense fallback={null}>
       <group ref={group} dispose={null} userData={{ camExcludeCollision: true }}>
-        {/* Replace character model here */}
         {props.children}
       </group>
     </Suspense>
@@ -75,6 +90,7 @@ export function EcctrlAnimation(props: EcctrlAnimationProps) {
 
 export type EcctrlAnimationProps = {
   characterURL: string;
+  animationUrls: string[];
   animationSet: AnimationSet;
   children: React.ReactNode;
 };
